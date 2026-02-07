@@ -49,6 +49,12 @@ function insertNonce(blobHex, nonceHex) {
   return { blobHex: blobBuffer.toString('hex'), offset };
 }
 
+function nonceToHexLE(nonce) {
+  const buf = Buffer.alloc(4);
+  buf.writeUInt32LE(nonce >>> 0, 0);
+  return buf.toString('hex');
+}
+
 function meetsTarget(hashHex, targetHex) {
   if (!targetHex || targetHex.length !== 8) return true;
   const hash = Buffer.from(hashHex, 'hex');
@@ -72,7 +78,7 @@ async function findShare({
   const start = Date.now();
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const nonceHex = (nonce & 0xFFFFFFFF).toString(16).padStart(8, '0');
+    const nonceHex = nonceToHexLE(nonce);
     const { blobHex, offset } = insertNonce(job.blob, nonceHex);
     if (log) log('nonce_offset', { jobId: job.job_id, offset });
     const result = await hashFn(blobHex);
