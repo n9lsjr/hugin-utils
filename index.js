@@ -55,12 +55,30 @@ function nonceToHexLE(nonce) {
   return buf.toString('hex');
 }
 
+function parseTarget(targetHex) {
+  if (!targetHex) return null;
+  const targetBuffer = Buffer.from(targetHex, 'hex');
+  if (targetBuffer.length === 4) {
+    const raw = targetBuffer.readUInt32LE(0);
+    if (raw === 0) return null;
+    const numerator = 0xFFFFFFFFFFFFFFFFn;
+    const denom = 0xFFFFFFFFn / BigInt(raw);
+    if (denom === 0n) return null;
+    return numerator / denom;
+  }
+  if (targetBuffer.length === 8) {
+    return targetBuffer.readBigUInt64LE(0);
+  }
+  return null;
+}
+
 function meetsTarget(hashHex, targetHex) {
-  if (!targetHex || targetHex.length !== 8) return true;
+  const target = parseTarget(targetHex);
+  if (target === null) return true;
   const hash = Buffer.from(hashHex, 'hex');
-  const targetNum = Buffer.from(targetHex, 'hex').readUInt32BE(0);
-  const hashNum = Buffer.from(hash.slice(0, 4)).reverse().readUInt32BE(0);
-  return hashNum <= targetNum;
+  if (hash.length < 32) return false;
+  const hashTail = hash.readBigUInt64LE(24);
+  return hashTail <= target;
 }
 
 async function findShare({
