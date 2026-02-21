@@ -1,5 +1,40 @@
 const DEFAULT_NONCE_OFFSET = 39;
 
+function hexToBytes(hex) {
+  if (typeof hex !== 'string') throw new Error('hex_to_bytes_invalid')
+  if (hex.length % 2 !== 0) throw new Error('hex_to_bytes_len')
+  const out = new Uint8Array(hex.length / 2)
+  for (let i = 0; i < out.length; i++) {
+    const byte = parseInt(hex.slice(i * 2, (i * 2) + 2), 16)
+    if (!Number.isFinite(byte)) throw new Error('hex_to_bytes_parse')
+    out[i] = byte
+  }
+  return out
+}
+
+function bytesToHex(bytes) {
+  let hex = ''
+  for (let i = 0; i < bytes.length; i++) {
+    hex += bytes[i].toString(16).padStart(2, '0')
+  }
+  return hex
+}
+
+function readUInt32LE(bytes, offset) {
+  return (
+    (bytes[offset] |
+      (bytes[offset + 1] << 8) |
+      (bytes[offset + 2] << 16) |
+      (bytes[offset + 3] << 24)) >>> 0
+  )
+}
+
+function readBigUInt64LE(bytes, offset) {
+  const lo = BigInt(readUInt32LE(bytes, offset))
+  const hi = BigInt(readUInt32LE(bytes, offset + 4))
+  return (hi << 32n) | lo
+}
+
 function readVarint(buffer, offset) {
   let value = 0;
   let shift = 0;
@@ -37,21 +72,21 @@ function getNonceOffsetFromBuffer(blobBuffer) {
 }
 
 function getNonceOffset(blobHex) {
-  const blobBuffer = Buffer.from(blobHex, 'hex');
+  const blobBuffer = hexToBytes(blobHex);
   return getNonceOffsetFromBuffer(blobBuffer);
 }
 
 function insertNonce(blobHex, nonceHex) {
-  const blobBuffer = Buffer.from(blobHex, 'hex');
-  const nonceBuffer = Buffer.from(nonceHex, 'hex');
+  const blobBuffer = hexToBytes(blobHex);
+  const nonceBuffer = hexToBytes(nonceHex);
   const offset = getNonceOffsetFromBuffer(blobBuffer);
-  nonceBuffer.copy(blobBuffer, offset);
-  return { blobHex: blobBuffer.toString('hex'), offset };
+  blobBuffer.set(nonceBuffer, offset);
+  return { blobHex: bytesToHex(blobBuffer), offset };
 }
 
 function extractPrevIdFromBlob(blobHex) {
   try {
-    const blobBuffer = Buffer.from(blobHex, 'hex');
+    const blobBuffer = hexToBytes(blobHex);
     let offset = 0;
     const major = readVarint(blobBuffer, offset);
     if (!major) return null;
@@ -63,31 +98,35 @@ function extractPrevIdFromBlob(blobHex) {
     if (!timestamp) return null;
     offset += timestamp.bytes;
     if (offset + 32 > blobBuffer.length) return null;
-    return blobBuffer.subarray(offset, offset + 32).toString('hex');
+    return bytesToHex(blobBuffer.subarray(offset, offset + 32));
   } catch (e) {
     return null;
   }
 }
 
 function nonceToHexLE(nonce) {
-  const buf = Buffer.alloc(4);
-  buf.writeUInt32LE(nonce >>> 0, 0);
-  return buf.toString('hex');
+  const n = nonce >>> 0
+  const out = new Uint8Array(4)
+  out[0] = n & 0xff
+  out[1] = (n >>> 8) & 0xff
+  out[2] = (n >>> 16) & 0xff
+  out[3] = (n >>> 24) & 0xff
+  return bytesToHex(out)
 }
 
 function parseTarget(targetHex) {
   if (!targetHex) return null;
-  const targetBuffer = Buffer.from(targetHex, 'hex');
-  if (targetBuffer.length === 4) {
-    const raw = targetBuffer.readUInt32LE(0);
+  const targetBytes = hexToBytes(targetHex)
+  if (targetBytes.length === 4) {
+    const raw = readUInt32LE(targetBytes, 0);
     if (raw === 0) return null;
     const numerator = 0xFFFFFFFFFFFFFFFFn;
     const denom = 0xFFFFFFFFn / BigInt(raw);
     if (denom === 0n) return null;
     return numerator / denom;
   }
-  if (targetBuffer.length === 8) {
-    return targetBuffer.readBigUInt64LE(0);
+  if (targetBytes.length === 8) {
+    return readBigUInt64LE(targetBytes, 0);
   }
   return null;
 }
@@ -95,9 +134,9 @@ function parseTarget(targetHex) {
 function meetsTarget(hashHex, targetHex) {
   const target = parseTarget(targetHex);
   if (target === null) return true;
-  const hash = Buffer.from(hashHex, 'hex');
-  if (hash.length < 32) return false;
-  const hashTail = hash.readBigUInt64LE(24);
+  const hashBytes = hexToBytes(hashHex);
+  if (hashBytes.length < 32) return false;
+  const hashTail = readBigUInt64LE(hashBytes, 24);
   return hashTail <= target;
 }
 
@@ -114,10 +153,9 @@ function nonceTagFromMessageHash(messageHash, bits) {
     const b = typeof bits === 'number' ? bits : 0;
     if (b <= 0 || b > 16) return 0;
     const mask = (1 << b) - 1;
-    const digest0 = require('crypto')
-      .createHash('sha256')
-      .update(String(messageHash))
-      .digest()[0];
+    // Isomorphic sha256 (works in Node + React Native).
+    const { sha256 } = require('js-sha256')
+    const digest0 = sha256.array(String(messageHash))[0]
     return digest0 & mask;
   } catch (e) {
     return 0;
@@ -129,7 +167,9 @@ function nonceMatchesTag(nonceHex, tagValue, bits) {
   const b = typeof bits === 'number' ? bits : 0;
   if (b <= 0) return true;
   const mask = (1 << b) - 1;
-  const nonce = parseInt(nonceHex, 16) >>> 0;
+  // Tag is computed over the actual 32-bit nonce value inserted into the blob (little-endian).
+  const nonceBytes = hexToBytes(nonceHex)
+  const nonce = readUInt32LE(nonceBytes, 0)
   return (nonce & mask) === (tagValue & mask);
 }
 
@@ -192,5 +232,8 @@ module.exports = {
   extractPrevIdFromBlob,
   nonceTagFromMessageHash,
   nonceMatchesTag,
-  findShare
+  findShare,
+  // helpers for embedders/backends
+  hexToBytes,
+  bytesToHex
 };
