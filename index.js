@@ -49,6 +49,26 @@ function insertNonce(blobHex, nonceHex) {
   return { blobHex: blobBuffer.toString('hex'), offset };
 }
 
+function extractPrevIdFromBlob(blobHex) {
+  try {
+    const blobBuffer = Buffer.from(blobHex, 'hex');
+    let offset = 0;
+    const major = readVarint(blobBuffer, offset);
+    if (!major) return null;
+    offset += major.bytes;
+    const minor = readVarint(blobBuffer, offset);
+    if (!minor) return null;
+    offset += minor.bytes;
+    const timestamp = readVarint(blobBuffer, offset);
+    if (!timestamp) return null;
+    offset += timestamp.bytes;
+    if (offset + 32 > blobBuffer.length) return null;
+    return blobBuffer.subarray(offset, offset + 32).toString('hex');
+  } catch (e) {
+    return null;
+  }
+}
+
 function nonceToHexLE(nonce) {
   const buf = Buffer.alloc(4);
   buf.writeUInt32LE(nonce >>> 0, 0);
@@ -81,6 +101,38 @@ function meetsTarget(hashHex, targetHex) {
   return hashTail <= target;
 }
 
+function minTargetHex(a, b) {
+  const aa = parseTarget(a);
+  const bb = parseTarget(b);
+  if (aa === null) return b;
+  if (bb === null) return a;
+  return aa <= bb ? a : b;
+}
+
+function nonceTagFromMessageHash(messageHash, bits) {
+  try {
+    const b = typeof bits === 'number' ? bits : 0;
+    if (b <= 0 || b > 16) return 0;
+    const mask = (1 << b) - 1;
+    const digest0 = require('crypto')
+      .createHash('sha256')
+      .update(String(messageHash))
+      .digest()[0];
+    return digest0 & mask;
+  } catch (e) {
+    return 0;
+  }
+}
+
+function nonceMatchesTag(nonceHex, tagValue, bits) {
+  if (typeof nonceHex !== 'string' || nonceHex.length !== 8) return false;
+  const b = typeof bits === 'number' ? bits : 0;
+  if (b <= 0) return true;
+  const mask = (1 << b) - 1;
+  const nonce = parseInt(nonceHex, 16) >>> 0;
+  return (nonce & mask) === (tagValue & mask);
+}
+
 async function findShare({
   job,
   startNonce,
@@ -89,13 +141,21 @@ async function findShare({
   hashesPerSecond = 500,
   timeBudgetMs = 1000,
   yieldEvery = 200,
-  logEvery = 100
+  logEvery = 100,
+  nonceTagBits = 0,
+  nonceTagValue = 0
 }) {
   const maxAttempts = Math.max(1, Math.floor((hashesPerSecond * timeBudgetMs) / 1000));
   let nonce = startNonce;
   const start = Date.now();
+  const b = typeof nonceTagBits === 'number' ? nonceTagBits : 0;
+  const mask = b > 0 ? ((1 << b) - 1) : 0;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (b > 0 && ((nonce >>> 0) & mask) !== (nonceTagValue & mask)) {
+      nonce++;
+      continue;
+    }
     const nonceHex = nonceToHexLE(nonce);
     const { blobHex, offset } = insertNonce(job.blob, nonceHex);
     if (log) log('nonce_offset', { jobId: job.job_id, offset });
@@ -128,5 +188,9 @@ module.exports = {
   getNonceOffset,
   insertNonce,
   meetsTarget,
+  minTargetHex,
+  extractPrevIdFromBlob,
+  nonceTagFromMessageHash,
+  nonceMatchesTag,
   findShare
 };
