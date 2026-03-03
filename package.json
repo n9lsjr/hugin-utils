@@ -1,13 +1,12 @@
 {
   "name": "hugin-utils",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "PoW utils for hugin node messages",
   "main": "index.js",
   "scripts": {
     "test": "node test/challenge.test.cjs"
   },
-  "dependencies": {},
-  "peerDependencies": {
+  "dependencies": {
     "kryptokrona-utils": "^1.3.7"
   },
   "license": "MIT",
