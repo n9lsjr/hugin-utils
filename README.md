@@ -113,7 +113,7 @@ const { HuginPow } = NativeModules
 
 const backend = create_js_hashfn_backend({
   // Must return a 64-char hex hash string
-  hash_fn: async (blobHex) => await HuginPow.cn_pico(blobHex)
+  hash_fn: async (blobHex) => await crypto.cn_pico(blobHex)
 })
 
 const scheduler = create_pow_scheduler()

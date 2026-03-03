@@ -1,4 +1,6 @@
 const DEFAULT_NONCE_OFFSET = 39;
+const { Crypto } = require('kryptokrona-utils')
+const crypto = new Crypto()
 
 function hexToBytes(hex) {
   if (typeof hex !== 'string') throw new Error('hex_to_bytes_invalid')
@@ -148,15 +150,30 @@ function minTargetHex(a, b) {
   return aa <= bb ? a : b;
 }
 
+function toHex(str) {
+  let result = ''
+  for (let i = 0; i < str.length; i++) {
+    result += str.charCodeAt(i).toString(16)
+  }
+  return result
+}
+
+function firstDigestByteFromHex(hex) {
+  if (typeof hex !== 'string' || hex.length < 2) throw new Error('cn_fast_hash_invalid_hex')
+  const value = parseInt(hex.slice(0, 2), 16)
+  if (!Number.isFinite(value)) throw new Error('cn_fast_hash_parse_failed')
+  return value
+}
+
 function nonceTagFromMessageHash(messageHash, bits) {
   try {
     const b = typeof bits === 'number' ? bits : 0;
     if (b <= 0 || b > 16) return 0;
     const mask = (1 << b) - 1;
-    // Isomorphic sha256 (works in Node + React Native).
-    const { sha256 } = require('js-sha256')
-    const digest0 = sha256.array(String(messageHash))[0]
-    return digest0 & mask;
+    const input = String(messageHash);
+    const digestHex = crypto.cn_fast_hash(toHex(input))
+    const digest0 = firstDigestByteFromHex(digestHex)
+    return digest0 & mask
   } catch (e) {
     return 0;
   }

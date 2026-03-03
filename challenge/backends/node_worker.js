@@ -79,7 +79,6 @@ function create_node_worker_backend({
       worker.send({ type, req_id, payload })
     })
   }
-
   return {
     async find_share({ job, hashes_per_second, time_budget_ms, nonce_tag_bits, nonce_tag_value }) {
       const tms = parseInt(time_budget_ms, 10)
