@@ -5,7 +5,7 @@ const path = require('path')
 class Challenge {
   constructor ({ threads } = {}) {
     const cpus = os.cpus().length
-    this.numThreads = Math.max(1, Math.min(threads || cpus, cpus))
+    this.numThreads = Math.max(1, Math.min(threads || Math.max(1, cpus - 2), cpus))
     this.workers = []
     this.currentJob = null
     this._cancel = null
@@ -38,27 +38,51 @@ class Challenge {
       let settled = false
       let pending = this.numThreads
 
+      const finish = (share) => {
+        if (settled) return
+        settled = true
+        Atomics.store(cancelArr, 0, 1)
+        this._cancel = null
+        clearTimeout(safetyTimer)
+        for (const { w, handler, errHandler } of listeners) {
+          w.removeListener('message', handler)
+          w.removeListener('error', errHandler)
+        }
+        resolve(share)
+      }
+
+      const decPending = () => {
+        pending--
+        if (pending <= 0 && !settled) finish(null)
+      }
+
+      const listeners = []
+
+      const safetyTimer = setTimeout(() => {
+        if (!settled) finish(null)
+      }, timeBudgetMs + 5000)
+
       for (let i = 0; i < this.numThreads; i++) {
         const w = this.workers[i]
         const id = `${Date.now()}-${Math.random()}-${i}`
 
         const handler = (msg) => {
           if (msg.id !== id) return
-          w.removeListener('message', handler)
-          pending--
-
-          if (msg.share && !settled) {
-            settled = true
-            Atomics.store(cancelArr, 0, 1)
-            this._cancel = null
-            resolve(msg.share)
-          } else if (pending === 0 && !settled) {
-            this._cancel = null
-            resolve(null)
+          if (msg.share) {
+            finish(msg.share)
+          } else {
+            decPending()
           }
         }
 
+        const errHandler = () => {
+          decPending()
+        }
+
+        listeners.push({ w, handler, errHandler })
         w.on('message', handler)
+        w.on('error', errHandler)
+
         w.postMessage({
           type: 'mine',
           id,
@@ -79,7 +103,7 @@ class Challenge {
     const workerPath = path.join(__dirname, 'miner_worker.js')
     for (let i = this.workers.length; i < this.numThreads; i++) {
       const w = new Worker(workerPath)
-      w.on('error', (err) => console.error('[miner] worker error:', err))
+      w.on('error', (err) => console.error('[challenge] worker error:', err))
       this.workers.push(w)
     }
   }

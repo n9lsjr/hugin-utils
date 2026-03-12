@@ -13,8 +13,6 @@ try {
   } catch {}
 }
 
-// ── JS helpers (used when native addon not built) ──
-
 const U64 = 0xFFFFFFFFFFFFFFFFn
 const U32 = 0xFFFFFFFFn
 
@@ -54,19 +52,17 @@ function meetsTarget (hashHex, target) {
   return tail <= target
 }
 
-// ── Mining loop ──
-
 async function mine (blob, targetHex, jobId, startNonce, timeBudgetMs, cancel, cancelIndex) {
   const offset = getNonceOffset(blob)
   const cancelArr = new Int32Array(cancel)
   const start = Date.now()
   let nonce = startNonce >>> 0
 
-  if (native) {
-    const c = offset * 2
-    const prefix = blob.slice(0, c)
-    const suffix = blob.slice(c + 8)
+  const c = offset * 2
+  const prefix = blob.slice(0, c)
+  const suffix = blob.slice(c + 8)
 
+  if (native) {
     while (true) {
       if (Atomics.load(cancelArr, cancelIndex) !== 0) return null
       if (Date.now() - start >= timeBudgetMs) return null
@@ -85,13 +81,8 @@ async function mine (blob, targetHex, jobId, startNonce, timeBudgetMs, cancel, c
     }
   }
 
-  // JS fallback
   const target = parseTarget(targetHex)
   if (target === null) return null
-
-  const c = offset * 2
-  const prefix = blob.slice(0, c)
-  const suffix = blob.slice(c + 8)
 
   while (true) {
     if (Atomics.load(cancelArr, cancelIndex) !== 0) return null
@@ -110,10 +101,14 @@ async function mine (blob, targetHex, jobId, startNonce, timeBudgetMs, cancel, c
 
 parentPort.on('message', async (msg) => {
   if (msg.type !== 'mine') return
-  const share = await mine(
-    msg.blob, msg.target, msg.jobId,
-    msg.startNonce, msg.timeBudgetMs,
-    msg.cancel, msg.cancelIndex
-  )
-  parentPort.postMessage({ id: msg.id, share })
+  try {
+    const share = await mine(
+      msg.blob, msg.target, msg.jobId,
+      msg.startNonce, msg.timeBudgetMs,
+      msg.cancel, msg.cancelIndex
+    )
+    parentPort.postMessage({ id: msg.id, share })
+  } catch (err) {
+    parentPort.postMessage({ id: msg.id, share: null, error: String(err) })
+  }
 })
