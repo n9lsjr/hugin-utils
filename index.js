@@ -142,6 +142,32 @@ function meetsTarget(hashHex, targetHex) {
   return hashTail <= target;
 }
 
+function isHexString(value) {
+  return typeof value === 'string' && /^[0-9a-f]+$/i.test(value)
+}
+
+function isValidPowJob(job) {
+  if (!job || typeof job !== 'object') return false
+  if (typeof job.job_id !== 'string' || job.job_id.length > 32) return false
+  if (typeof job.blob !== 'string' || !isHexString(job.blob) || job.blob.length % 2 !== 0) return false
+  if (typeof job.target !== 'string' || !isHexString(job.target) || job.target.length !== 8) return false
+  return true
+}
+
+async function verifyShare(job, nonce, result) {
+  if (!isValidPowJob(job)) return false
+  if (typeof nonce !== 'string' || nonce.length !== 8 || !isHexString(nonce)) return false
+  if (typeof result !== 'string' || result.length !== 64 || !isHexString(result)) return false
+  const { blobHex } = insertNonce(job.blob, nonce)
+  const hashHex = await crypto.cn_turtle_lite_slow_hash_v2(blobHex)
+  if (hashHex !== result) return false
+  return meetsTarget(hashHex, job.target)
+}
+
+function checkHash(hashHex, targetHex) {
+  return meetsTarget(hashHex, targetHex)
+}
+
 function minTargetHex(a, b) {
   const aa = parseTarget(a);
   const bb = parseTarget(b);
@@ -245,12 +271,15 @@ module.exports = {
   getNonceOffset,
   insertNonce,
   meetsTarget,
+  checkHash,
   minTargetHex,
   extractPrevIdFromBlob,
+  isHexString,
+  isValidPowJob,
+  verifyShare,
   nonceTagFromMessageHash,
   nonceMatchesTag,
   findShare,
-  // helpers for embedders/backends
   hexToBytes,
   bytesToHex
 };

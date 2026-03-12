@@ -1,6 +1,3 @@
-module.exports = {
-  ...require('./core'),
-  ...require('./backends/native_batch'),
-  ...require('./backends/js_hashfn')
-}
+const { createChallenge, Challenge } = require('./miner')
 
+module.exports = { createChallenge, Challenge }
