@@ -23,8 +23,8 @@ function create_pow_scheduler() {
 }
 
 function create_rate_policy({
-  total_hashes_per_second_cap = 1500,
-  phase1_hashes_per_second_cap = 950,
+  total_hashes_per_second_cap = 1700,
+  phase1_hashes_per_second_cap = 1100,
   phase2_hashes_per_second_cap = 250,
   phase1_ms = 2 * 60 * 1000,
   slice_ms_phase1 = 10000,
@@ -57,7 +57,7 @@ async function message_challenge({
   backend,
   message_hash,
   required_shares = 1,
-  nonce_tag_bits = 4,
+  nonce_tag_bits = 0,
   scheduler,
   rate_policy,
   freshness_policy,

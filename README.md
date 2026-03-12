@@ -35,7 +35,13 @@ const { create_node_worker_backend } = require('hugin-utils/challenge/node_worke
 const backend = create_node_worker_backend()
 ```
 
-Note: the Node-worker backend uses `kryptokrona-utils` for `cn_turtle_lite_slow_hash_v2`. It is declared as an **optional peer dependency** (desktop already provides it).
+Note: the Node-worker backend uses `kryptokrona-utils` (which uses native `kryptokrona-crypto`) for `cn_turtle_lite_slow_hash_v2`.
+
+Tuning:
+
+- Default worker count is `4` (capped to CPU count).
+- Override with `create_node_worker_backend({ threads: N })` or `HUGIN_POW_THREADS=N`.
+- For the node-worker backend, nonce-tag filtering parameters are ignored for max throughput.
 
 ### Mobile backend (native batch scan)
 

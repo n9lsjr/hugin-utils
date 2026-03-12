@@ -1,6 +1,6 @@
 {
   "name": "hugin-utils",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "PoW utils for hugin node messages",
   "main": "index.js",
   "scripts": {

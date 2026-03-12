@@ -1,16 +1,29 @@
 const path = require('path')
 const { fork } = require('child_process')
+const os = require('os')
 
-const NUM_THREADS = 3
-const NONCE_RANGES = [
-  0,
-  Math.floor(0xFFFFFFFF / 3),
-  Math.floor((2 * 0xFFFFFFFF) / 3)
-]
+const DEFAULT_THREADS = 4
+
+function resolve_thread_count(explicit) {
+  const envThreads = parseInt(process.env.HUGIN_POW_THREADS || '', 10)
+  const wanted = Number.isFinite(explicit) && explicit > 0
+    ? Math.floor(explicit)
+    : (Number.isFinite(envThreads) && envThreads > 0 ? Math.floor(envThreads) : DEFAULT_THREADS)
+  const cpuCount = Math.max(1, (os.cpus() || []).length || 1)
+  return Math.max(1, Math.min(wanted, cpuCount))
+}
+
+function nonce_ranges(count) {
+  const step = Math.floor(0xFFFFFFFF / Math.max(1, count))
+  return Array.from({ length: count }, (_, i) => (step * i) >>> 0)
+}
 
 function create_node_worker_backend({
-  max_job_time_ms = 90000
+  max_job_time_ms = 90000,
+  threads
 } = {}) {
+  const NUM_THREADS = resolve_thread_count(threads)
+  const NONCE_RANGES = nonce_ranges(NUM_THREADS)
   const workers = []
   let workers_ready = false
   const requests = new Map()
@@ -68,8 +81,8 @@ function create_node_worker_backend({
 
   function call_worker(type, payload, timeout_ms, thread_index = 0) {
     ensure_workers()
-    return new Promise((resolve, reject) => {
-      const req_id = `${Date.now()}-${Math.random()}-${thread_index}`
+    const req_id = `${Date.now()}-${Math.random()}-${thread_index}`
+    const promise = new Promise((resolve, reject) => {
       let timer = null
       if (timeout_ms && timeout_ms > 0) {
         const backlog = requests.size
@@ -83,6 +96,7 @@ function create_node_worker_backend({
         }, effective_timeout_ms)
       }
       requests.set(req_id, {
+        timer,
         resolve: (result) => {
           if (timer) clearTimeout(timer)
           resolve(result)
@@ -95,29 +109,61 @@ function create_node_worker_backend({
       })
       workers[thread_index].send({ type, req_id, payload })
     })
+    return { req_id, promise }
+  }
+
+  function abort_request(req_id) {
+    const pending = requests.get(req_id)
+    if (!pending) return
+    if (pending.timer) clearTimeout(pending.timer)
+    requests.delete(req_id)
+  }
+
+  function cancel_worker_request(thread_index, req_id) {
+    if (!workers[thread_index]) return
+    try {
+      workers[thread_index].send({ type: 'cancel_share', req_id })
+    } catch (e) {}
   }
 
   return {
-    async find_share({ job, hashes_per_second, time_budget_ms, nonce_tag_bits, nonce_tag_value }) {
+    async find_share({ job, hashes_per_second, time_budget_ms }) {
       const tms = parseInt(time_budget_ms, 10)
       const timeout_ms = tms > 0 ? tms + 1500 : max_job_time_ms + 1500
       const base = Math.floor(Math.random() * 0xFFFFFFFF)
       const opts = {
         hashes_per_second: parseInt(hashes_per_second, 10),
         time_budget_ms: tms,
-        max_job_time_ms,
-        nonceTagBits: nonce_tag_bits,
-        nonceTagValue: nonce_tag_value
+        max_job_time_ms
       }
 
-      const promises = []
+      const workerCalls = []
       for (let i = 0; i < NUM_THREADS; i++) {
         const start_nonce = (base + NONCE_RANGES[i]) >>> 0
-        promises.push(
+        workerCalls.push(
           call_worker('find_share', { job, start_nonce, options: opts }, timeout_ms, i)
         )
       }
-      return await Promise.any(promises)
+
+      const race = workerCalls.map(({ promise }) =>
+        promise.then((share) => {
+          if (share) return share
+          throw new Error('pow_no_share')
+        })
+      )
+
+      try {
+        const winner = await Promise.any(race)
+        for (let i = 0; i < workerCalls.length; i++) {
+          const id = workerCalls[i].req_id
+          if (!id) continue
+          abort_request(id)
+          cancel_worker_request(i, id)
+        }
+        return winner
+      } catch (e) {
+        return null
+      }
     }
   }
 }
