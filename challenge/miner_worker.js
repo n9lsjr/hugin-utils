@@ -56,7 +56,7 @@ function meetsTarget (hashHex, target) {
 
 // ── Mining loop ──
 
-function mine (blob, targetHex, jobId, startNonce, timeBudgetMs, cancel, cancelIndex) {
+async function mine (blob, targetHex, jobId, startNonce, timeBudgetMs, cancel, cancelIndex) {
   const offset = getNonceOffset(blob)
   const cancelArr = new Int32Array(cancel)
   const start = Date.now()
@@ -72,7 +72,7 @@ function mine (blob, targetHex, jobId, startNonce, timeBudgetMs, cancel, cancelI
       if (Date.now() - start >= timeBudgetMs) return null
 
       const blobHex = native.insertNonce(prefix, suffix, nonce)
-      const result = crypto.cn_turtle_lite_slow_hash_v2(blobHex)
+      const result = await crypto.cn_turtle_lite_slow_hash_v2(blobHex)
 
       if (native.checkHash(result, targetHex)) {
         return {
@@ -99,7 +99,7 @@ function mine (blob, targetHex, jobId, startNonce, timeBudgetMs, cancel, cancelI
 
     const nonceHex = nonceToHexLE(nonce)
     const blobHex = prefix + nonceHex + suffix
-    const result = crypto.cn_turtle_lite_slow_hash_v2(blobHex)
+    const result = await crypto.cn_turtle_lite_slow_hash_v2(blobHex)
 
     if (meetsTarget(result, target)) {
       return { job_id: jobId, nonce: nonceHex, result: result.toLowerCase() }
@@ -108,9 +108,9 @@ function mine (blob, targetHex, jobId, startNonce, timeBudgetMs, cancel, cancelI
   }
 }
 
-parentPort.on('message', (msg) => {
+parentPort.on('message', async (msg) => {
   if (msg.type !== 'mine') return
-  const share = mine(
+  const share = await mine(
     msg.blob, msg.target, msg.jobId,
     msg.startNonce, msg.timeBudgetMs,
     msg.cancel, msg.cancelIndex
