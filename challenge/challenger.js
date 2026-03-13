@@ -1,4 +1,4 @@
-const { Worker } = require('worker_threads')
+const { fork } = require('child_process')
 const os = require('os')
 const path = require('path')
 
@@ -6,16 +6,16 @@ class Challenge {
   constructor ({ threads } = {}) {
     const cpus = os.cpus().length
     this.numThreads = Math.max(1, Math.min(threads || Math.max(1, cpus - 2), cpus))
-    this.workers = []
+    this.procs = []
     this.currentJob = null
-    this._cancel = null
+    this._cancelled = false
   }
 
   setJob (job) {
     if (!job || !job.job_id || !job.blob || !job.target) return
     if (this.currentJob && this.currentJob.job_id === job.job_id) return
     this.currentJob = job
-    if (this._cancel) Atomics.store(this._cancel, 0, 1)
+    this._cancel()
   }
 
   hasJob () {
@@ -24,12 +24,9 @@ class Challenge {
 
   async findShare (timeBudgetMs = 30000) {
     if (!this.currentJob) return null
-    this._ensureWorkers()
+    this._ensureProcs()
 
-    const cancel = new SharedArrayBuffer(4)
-    const cancelArr = new Int32Array(cancel)
-    this._cancel = cancelArr
-
+    this._cancelled = false
     const job = this.currentJob
     const step = Math.floor(0xFFFFFFFF / this.numThreads)
     const base = (Math.random() * 0xFFFFFFFF) >>> 0
@@ -41,12 +38,12 @@ class Challenge {
       const finish = (share) => {
         if (settled) return
         settled = true
-        Atomics.store(cancelArr, 0, 1)
-        this._cancel = null
+        this._cancel()
         clearTimeout(safetyTimer)
-        for (const { w, handler, errHandler } of listeners) {
-          w.removeListener('message', handler)
-          w.removeListener('error', errHandler)
+        for (const { proc, handler, errHandler } of listeners) {
+          proc.removeListener('message', handler)
+          proc.removeListener('error', errHandler)
+          proc.removeListener('exit', errHandler)
         }
         resolve(share)
       }
@@ -63,7 +60,12 @@ class Challenge {
       }, timeBudgetMs + 5000)
 
       for (let i = 0; i < this.numThreads; i++) {
-        const w = this.workers[i]
+        const proc = this.procs[i]
+        if (!proc || !proc.connected) {
+          decPending()
+          continue
+        }
+
         const id = `${Date.now()}-${Math.random()}-${i}`
 
         const handler = (msg) => {
@@ -79,42 +81,58 @@ class Challenge {
           decPending()
         }
 
-        listeners.push({ w, handler, errHandler })
-        w.on('message', handler)
-        w.on('error', errHandler)
+        listeners.push({ proc, handler, errHandler })
+        proc.on('message', handler)
+        proc.on('error', errHandler)
+        proc.on('exit', errHandler)
 
-        w.postMessage({
-          type: 'mine',
+        proc.send({
+          type: 'solve',
           id,
           blob: job.blob,
           target: job.target,
           jobId: job.job_id,
           startNonce: (base + step * i) >>> 0,
-          timeBudgetMs,
-          cancel,
-          cancelIndex: 0
+          timeBudgetMs
         })
       }
     })
   }
 
-  _ensureWorkers () {
-    if (this.workers.length >= this.numThreads) return
-    const workerPath = path.join(__dirname, 'miner_worker.js')
-    for (let i = this.workers.length; i < this.numThreads; i++) {
-      const w = new Worker(workerPath)
-      w.on('error', (err) => console.error('[challenge] worker error:', err))
-      this.workers.push(w)
+  _cancel () {
+    this._cancelled = true
+    for (const proc of this.procs) {
+      try {
+        if (proc.connected) proc.send({ type: 'cancel' })
+      } catch {}
+    }
+  }
+
+  _ensureProcs () {
+    const alive = this.procs.filter(p => p && p.connected)
+    if (alive.length >= this.numThreads) return
+    this.procs = alive
+    const scriptPath = path.join(__dirname, 'challenge_process.js')
+    for (let i = this.procs.length; i < this.numThreads; i++) {
+      const proc = fork(scriptPath, [], { stdio: 'ignore' })
+      proc.on('error', (err) => console.error('[challenge] process error:', err))
+      proc.on('exit', () => {
+        const idx = this.procs.indexOf(proc)
+        if (idx !== -1) this.procs[idx] = null
+      })
+      this.procs.push(proc)
     }
   }
 
   destroy () {
-    if (this._cancel) Atomics.store(this._cancel, 0, 1)
-    for (const w of this.workers) {
-      try { w.terminate() } catch {}
+    this._cancel()
+    for (const proc of this.procs) {
+      try {
+        if (proc && proc.connected) proc.kill()
+      } catch {}
     }
-    this.workers = []
-    this._cancel = null
+    this.procs = []
+    this._cancelled = false
   }
 }
 

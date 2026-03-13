@@ -12,7 +12,13 @@
           "VCCLCompilerTool": { "Optimization": 2 }
         }
       }],
-      ["OS!='win'", {
+      ["OS=='mac'", {
+        "xcode_settings": {
+          "GCC_OPTIMIZATION_LEVEL": "3",
+          "MACOSX_DEPLOYMENT_TARGET": "10.15"
+        }
+      }],
+      ["OS=='linux'", {
         "cflags": ["-O3"],
         "cflags_cc": ["-O3"]
       }]

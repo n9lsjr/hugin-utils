@@ -1,3 +1,3 @@
-const { createChallenge, Challenge } = require('./miner')
+const { createChallenge, Challenge } = require('./challenger')
 
 module.exports = { createChallenge, Challenge }
